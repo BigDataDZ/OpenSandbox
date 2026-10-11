@@ -237,6 +237,13 @@ internal class IsolatedSessionsAdapter(
             .addProtectedHeaderOriginGuard(execdBaseUrl)
             .build()
 
+    // The shared SSE client has no per-endpoint knowledge; clone it with the
+    // endpoint origin guard for streamed foreground runs.
+    private val sseGuardedClient =
+        httpClientProvider.sseClient.newBuilder()
+            .addProtectedHeaderOriginGuard(execdBaseUrl)
+            .build()
+
     override fun create(request: CreateIsolatedSessionRequest): IsolationSession {
         require(request.workspace != null || !request.overlays.isNullOrEmpty()) {
             "workspace or overlays is required"
@@ -422,7 +429,7 @@ internal class IsolatedSessionsAdapter(
 
             val execution = Execution()
 
-            httpClientProvider.sseClient.newCall(httpRequest).execute().use { response ->
+            sseGuardedClient.newCall(httpRequest).execute().use { response ->
                 ensureSuccess(response, "run in isolated session")
                 response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)?.use { reader ->
                     val dispatcher = ExecutionEventDispatcher(execution, null)

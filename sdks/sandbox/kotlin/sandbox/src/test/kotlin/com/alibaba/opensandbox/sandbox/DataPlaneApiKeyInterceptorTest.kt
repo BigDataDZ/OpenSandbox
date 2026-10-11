@@ -190,6 +190,24 @@ class DataPlaneApiKeyInterceptorTest {
     }
 
     @Test
+    fun `configured api key replaces a custom header key in proxy mode`() {
+        val config =
+            ConnectionConfig.builder()
+                .apiKey("configured-key")
+                .addHeader("OPEN-SANDBOX-API-KEY", "custom-header-key")
+                .useServerProxy(true)
+                .build()
+
+        HttpClientProvider(config).use { provider ->
+            execute(provider.httpClient)
+        }
+
+        // Proxy-mode precedence matches Python/JS: endpoint-scoped key >
+        // configured apiKey > header-supplied key.
+        assertEquals("configured-key", server.takeRequest().getHeader("OPEN-SANDBOX-API-KEY"))
+    }
+
+    @Test
     fun `endpoint-scoped key injected after client cloning wins over the connection key in proxy mode`() {
         val config =
             ConnectionConfig.builder()

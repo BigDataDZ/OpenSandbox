@@ -45,7 +45,7 @@ private val PROTECTED_HEADER_PREFIXES = arrayOf("OPEN-SANDBOX-", "OPENSANDBOX-")
  * a cross-origin redirect (scheme/host/port change). Same-origin hops and
  * unrelated custom headers are untouched.
  */
-internal fun OkHttpClient.Builder.addProtectedHeaderOriginGuard(baseUrl: String): OkHttpClient.Builder {
+fun OkHttpClient.Builder.addProtectedHeaderOriginGuard(baseUrl: String): OkHttpClient.Builder {
     addNetworkInterceptor(CrossOriginProtectedHeaderGuard(baseUrl.toHttpUrlOrNull()))
     return this
 }
@@ -97,13 +97,26 @@ class HttpClientProvider(
 
     private val connectionPoolOwnedBySdk: Boolean = config.connectionPool == null
 
+    // Proxy-mode precedence parity with the Python/JS SDKs: a connection-level
+    // API-key header yields to the configured apiKey (the data-plane
+    // interceptor then attaches it), while an endpoint-scoped key injected by
+    // the adapters still wins. The header survives only in proxy mode with no
+    // configured key, where it is the sole credential for the auth gate. In
+    // direct mode it is irrelevant: the data-plane interceptor strips it.
+    private val normalizedConnectionHeaders: Map<String, String> =
+        if (config.useServerProxy && config.getApiKey().isNotEmpty()) {
+            config.headers.filterKeys { it.lowercase() != API_KEY_HEADER.lowercase() }
+        } else {
+            config.headers
+        }
+
     private val baseBuilder: OkHttpClient.Builder
         get() {
             val builder =
                 OkHttpClient.Builder()
                     .connectionPool(connectionPool)
                     .addInterceptor(UserAgentInterceptor(config.userAgent))
-                    .addInterceptor(ExtraHeadersInterceptor(config.headers))
+                    .addInterceptor(ExtraHeadersInterceptor(normalizedConnectionHeaders))
                     .addInterceptor(ClientIpInterceptor { ClientIpDetector.clientIp() })
             if (config.enableTracing) {
                 // Propagate the active trace context (W3C traceparent) so the
