@@ -70,6 +70,24 @@ func main() {
 		return
 	}
 
+	quarantineOwner, err := newRevisionQuarantine()
+	if err != nil {
+		log.Fatalf("experimental runtime containment: %v", err)
+	}
+	if quarantineOwner != nil {
+		defer quarantineOwner.target.Close()
+	}
+
+	// Reject unsupported experimental storage before policy loading or network
+	// setup. Fast Sandbox dispatched above does not use this sidecar store.
+	if constants.IsTruthy(os.Getenv(constants.EnvExperimentalRevisionRuntime)) {
+		if path := strings.TrimSpace(os.Getenv(constants.EnvEgressPolicyFile)); path != "" {
+			if _, err := policy.NewAtomicPolicyFile(path); err != nil {
+				log.Fatalf("invalid experimental policy storage: %v", err)
+			}
+		}
+	}
+
 	// Erase any stale mitmproxy CA left on the shared volume by a previous
 	// egress generation so the agent's bootstrap wait-loop blocks for this
 	// generation's export. See PurgeStaleExportedCA / upstream issue #1370.
@@ -170,7 +188,7 @@ func main() {
 
 	httpAddr := envOrDefault(constants.EnvEgressHTTPAddr, constants.DefaultEgressServerAddr)
 	mitmGate := mitmproxy.NewHealthGate()
-	policySrv, policyHandler, err := startPolicyServer(proxy, nftMgr, mode, httpAddr, os.Getenv(constants.EnvEgressToken), allowIPs, os.Getenv(constants.EnvEgressPolicyFile), alwaysDeny, alwaysAllow, mitmGate)
+	policySrv, policyHandler, err := startPolicyServer(proxy, nftMgr, mode, httpAddr, os.Getenv(constants.EnvEgressToken), allowIPs, os.Getenv(constants.EnvEgressPolicyFile), alwaysDeny, alwaysAllow, mitmGate, quarantineOwner)
 	if err != nil {
 		log.Fatalf("failed to start policy server: %v", err)
 	}
@@ -183,6 +201,11 @@ func main() {
 	if !constants.IsTruthy(os.Getenv(constants.EnvExperimentalRevisionRuntime)) {
 		mitmGate.MarkStackReady()
 	}
+	if constants.IsTruthy(os.Getenv(constants.EnvExperimentalRevisionRuntime)) && mitm != nil {
+		// Attach the live mitmdump lifecycle owner before serving revision-gated
+		// Vault writes; until then such writes fail closed with 503.
+		policyHandler.setRevisionMitm(mitm)
+	}
 	if mitm != nil {
 		mitm.watchMitmproxy(ctx, mitmGate)
 	}
@@ -191,7 +214,7 @@ func main() {
 		log.Errorf("startup hooks (post) error: %v", err)
 	}
 
-	waitForShutdown(ctx, proxy, policySrv, exemptDst, nftMgr, mitm, blockedBroadcaster)
+	waitForShutdown(ctx, proxy, policySrv, exemptDst, nftMgr, mitm, blockedBroadcaster, policyHandler)
 }
 
 func withLogger(ctx context.Context) context.Context {

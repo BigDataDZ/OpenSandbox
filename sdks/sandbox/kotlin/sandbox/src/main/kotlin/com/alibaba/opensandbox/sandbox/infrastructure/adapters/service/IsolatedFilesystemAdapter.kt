@@ -89,10 +89,11 @@ internal class IsolatedFilesystemAdapter(
                 .build(),
         )
 
-    // Same endpoint origin as the API client: guards raw newCall paths
-    // against credential replay on cross-origin redirect hops.
+    // Same endpoint origin as the transfer client: guards raw newCall paths
+    // against credential replay on cross-origin redirect hops while keeping
+    // the transfer deadline.
     private val guardedClient =
-        httpClientProvider.httpClient.newBuilder()
+        httpClientProvider.transferClient.newBuilder()
             .addProtectedHeaderOriginGuard(execdBaseUrl)
             .build()
 
